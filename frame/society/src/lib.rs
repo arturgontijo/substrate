@@ -247,8 +247,6 @@
 //! make judgement on a suspended candidate.
 //! * `set_max_membership` - The ROOT origin can update the maximum member count for the society.
 //! The max membership count must be greater than 1.
-//! * `change_founder` - As a society, allows to change the founder.
-//! Must be called throught bid_action().
 
 // Ensure we're `no_std` when compiling for Wasm.
 #![cfg_attr(not(feature = "std"), no_std)]
@@ -432,9 +430,6 @@ pub mod pallet {
 		/// The origin that is allowed to call `found`.
 		type FounderSetOrigin: EnsureOrigin<Self::Origin>;
 
-		/// The origin that is allowed to make suspension judgements.
-		type SuspensionJudgementOrigin: EnsureOrigin<Self::Origin>;
-
 		/// The number of blocks between membership challenges.
 		#[pallet::constant]
 		type ChallengePeriod: Get<Self::BlockNumber>;
@@ -497,8 +492,8 @@ pub mod pallet {
 		NotHead,
 		/// The action bid has too little value for it's call.
 		InsufficientActionDeposit,
-		/// The caller is not the actions account.
-		NotFromActions,
+		/// The caller is not the Society account.
+		NotFromSociety,
 	}
 
 	#[pallet::event]
@@ -1112,29 +1107,7 @@ pub mod pallet {
 			Ok(())
 		}
 
-		/// Change the Founder of the society.
-		///
-		/// The dispatch origin for this call must be the actions account and must be _Signed_.
-		///
-		/// # <weight>
-		/// - One storage reads O(1).
-		/// - One storage removal O(1).
-		/// - One storage write to add the new Founder to society. O(1)
-		/// - One event.
-		///
-		/// Total Complexity: O(1)
-		/// # </weight>
-		#[pallet::weight(T::BlockWeights::get().max_block / 10)]
-		pub fn change_founder(origin: OriginFor<T>, new_founder: T::AccountId) -> DispatchResult {
-			let society_account = ensure_signed(origin)?;
-			ensure!(society_account == Self::actions(), Error::<T, I>::NotFromActions);
-			Founder::<T, I>::kill();
-			<Founder<T, I>>::put(&new_founder);
-			Self::deposit_event(Event::<T, I>::FounderChanged(new_founder));
-			Ok(())
-		}
-
-		/// Allow suspension judgement origin to make judgement on a suspended member.
+		/// Allow society to make judgement on a suspended member.
 		///
 		/// If a suspended member is forgiven, we simply add them back as a member, not affecting
 		/// any of the existing storage items for that member.
@@ -1142,7 +1115,7 @@ pub mod pallet {
 		/// If a suspended member is rejected, remove all associated storage items, including
 		/// their payouts, and remove any vouched bids they currently have.
 		///
-		/// The dispatch origin for this call must be from the _SuspensionJudgementOrigin_.
+		/// The dispatch origin for this call must be from the society account.
 		///
 		/// Parameters:
 		/// - `who` - The suspended member to be judged.
@@ -1168,9 +1141,9 @@ pub mod pallet {
 			who: T::AccountId,
 			forgive: bool,
 		) -> DispatchResult {
-			T::SuspensionJudgementOrigin::ensure_origin(origin)?;
+			let society_account = ensure_signed(origin)?;
+			ensure!(society_account == Self::account(), Error::<T, I>::NotFromSociety);
 			ensure!(<SuspendedMembers<T, I>>::contains_key(&who), Error::<T, I>::NotSuspended);
-
 			if forgive {
 				// Try to add member back to society. Can fail with `MaxMembers` limit.
 				Self::add_member(&who)?;
@@ -1198,7 +1171,7 @@ pub mod pallet {
 			Ok(())
 		}
 
-		/// Allow suspended judgement origin to make judgement on a suspended candidate.
+		/// Allow society to make judgement on a suspended candidate.
 		///
 		/// If the judgement is `Approve`, we add them to society as a member with the appropriate
 		/// payment for joining society.
@@ -1209,7 +1182,7 @@ pub mod pallet {
 		/// If the judgement is `Rebid`, we put the candidate back in the bid pool and let them go
 		/// through the induction process again.
 		///
-		/// The dispatch origin for this call must be from the _SuspensionJudgementOrigin_.
+		/// The dispatch origin for this call must be from the society account.
 		///
 		/// Parameters:
 		/// - `who` - The suspended candidate to be judged.
@@ -1244,11 +1217,12 @@ pub mod pallet {
 			who: T::AccountId,
 			judgement: Judgement,
 		) -> DispatchResult {
-			T::SuspensionJudgementOrigin::ensure_origin(origin)?;
+			let society_account = ensure_signed(origin)?;
+			ensure!(society_account == Self::account(), Error::<T, I>::NotFromSociety);
 			if let Some((value, kind)) = <SuspendedCandidates<T, I>>::get(&who) {
 				match judgement {
 					Judgement::Approve => {
-						// Suspension Judgement origin has approved this candidate
+						// Society has approved this candidate
 						// Make sure we can pay them
 						let pot = Self::pot();
 						ensure!(pot >= value, Error::<T, I>::InsufficientPot);
@@ -1262,13 +1236,13 @@ pub mod pallet {
 						Self::execute_accepted_candidate(&who, value, kind, maturity);
 					},
 					Judgement::Reject => {
-						// Founder has rejected this candidate
+						// Society has rejected this candidate
 						match kind {
 							BidKind::Deposit(deposit) => {
 								// Slash deposit and move it to the society treasury account
 								let res = T::Currency::repatriate_reserved(
 									&who,
-									&Self::account_id(),
+									&Self::treasury(),
 									deposit,
 									BalanceStatus::Free,
 								);
@@ -1284,7 +1258,7 @@ pub mod pallet {
 								// instead of the "treasury"
 								let _ = T::Currency::repatriate_reserved(
 									&who,
-									&Self::actions(),
+									&Self::account(),
 									deposit,
 									BalanceStatus::Free,
 								);
@@ -1292,7 +1266,7 @@ pub mod pallet {
 						}
 					},
 					Judgement::Rebid => {
-						// Founder has taken no judgement, and candidate is placed back into the
+						// Society has taken no judgement, and candidate is placed back into the
 						// pool.
 						let bids = <Bids<T, I>>::get();
 						Self::put_bid(bids, &who, value, kind);
@@ -1307,10 +1281,10 @@ pub mod pallet {
 			Ok(())
 		}
 
-		/// Allows root origin to change the maximum number of members in society.
+		/// Allows society to change the maximum number of members in society.
 		/// Max membership count must be greater than 1.
 		///
-		/// The dispatch origin for this call must be from _ROOT_.
+		/// The dispatch origin for this call must be from the society account.
 		///
 		/// Parameters:
 		/// - `max` - The maximum number of members for the society.
@@ -1323,7 +1297,8 @@ pub mod pallet {
 		/// # </weight>
 		#[pallet::weight(T::BlockWeights::get().max_block / 10)]
 		pub fn set_max_members(origin: OriginFor<T>, max: u32) -> DispatchResult {
-			ensure_root(origin)?;
+			let society_account = ensure_signed(origin)?;
+			ensure!(society_account == Self::account(), Error::<T, I>::NotFromSociety);
 			ensure!(max > 1, Error::<T, I>::MaxMembers);
 			MaxMembers::<T, I>::put(max);
 			Self::deposit_event(Event::<T, I>::NewMaxMembers(max));
@@ -1375,9 +1350,9 @@ pub mod pallet {
 		) -> DispatchResult {
 			let actor = ensure_signed(origin)?;
 			// Check value is at least per-byte deposit for call
-			let min_value = <BalanceOf<T, I>>::from(call.encode().len() as u32)
-				.saturating_mul(T::ActionByteDeposit::get());
-			ensure!(value >= min_value, Error::<T, I>::InsufficientActionDeposit);
+			// let min_value = <BalanceOf<T, I>>::from(call.encode().len() as u32)
+			// 	.saturating_mul(T::ActionByteDeposit::get());
+			// ensure!(value >= min_value, Error::<T, I>::InsufficientActionDeposit);
 			// Check user is not suspended.
 			ensure!(!<SuspendedCandidates<T, I>>::contains_key(&actor), Error::<T, I>::Suspended);
 			ensure!(!<SuspendedMembers<T, I>>::contains_key(&actor), Error::<T, I>::Suspended);
@@ -1521,7 +1496,9 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
 				Ok(())
 			},
 			// User is already a member, do nothing.
-			Ok(_) => Ok(()),
+			Ok(_) => {
+				Ok(())
+			},
 		}
 	}
 
@@ -1678,7 +1655,7 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
 					// Move the slashed amount back from payouts account to local treasury.
 					let res = T::Currency::transfer(
 						&Self::payouts(),
-						&Self::account_id(),
+						&Self::treasury(),
 						total_slash,
 						AllowDeath,
 					);
@@ -1694,7 +1671,7 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
 				// this should never fail since we ensure we can afford the payouts in a previous
 				// block, but there's not much we can do to recover if it fails anyway.
 				let res = T::Currency::transfer(
-					&Self::account_id(),
+					&Self::treasury(),
 					&Self::payouts(),
 					total_payouts,
 					AllowDeath,
@@ -1734,7 +1711,7 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
 
 			// Bump the pot by at most PeriodSpend, but less if there's not very much left in our
 			// account.
-			let unaccounted = T::Currency::free_balance(&Self::account_id()).saturating_sub(pot);
+			let unaccounted = T::Currency::free_balance(&Self::treasury()).saturating_sub(pot);
 			pot += T::PeriodSpend::get().min(unaccounted / 2u8.into());
 
 			<Pot<T, I>>::put(&pot);
@@ -1831,7 +1808,7 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
 			BidKind::Action(deposit, call) => {
 				let _ = T::Currency::unreserve(candidate, deposit);
 				// build society call origin
-				let society_account = Self::actions();
+				let society_account = Self::account();
 				let society_origin: T::Origin =
 					frame_system::RawOrigin::Signed(society_account).into();
 				let call_option: Option<<T as Config<I>>::Call> =
@@ -1900,7 +1877,7 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
 	///
 	/// This actually does computation. If you need to keep using it, then make sure you cache the
 	/// value and only call this once.
-	pub fn account_id() -> T::AccountId {
+	pub fn treasury() -> T::AccountId {
 		T::PalletId::get().into_account()
 	}
 
@@ -1912,12 +1889,12 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
 		T::PalletId::get().into_sub_account(b"payouts")
 	}
 
-	/// The actions account ID. This is used to perform all bid_actions calls.
+	/// The account ID of the society. This is used to perform all bid_actions calls.
 	///
 	/// This actually does computation. If you need to keep using it, then make sure you cache the
 	/// value and only call this once.
-	pub fn actions() -> T::AccountId {
-		T::PalletId::get().into_sub_account(b"actions")
+	pub fn account() -> T::AccountId {
+		T::PalletId::get().into_sub_account(b"society")
 	}
 
 	/// Return the duration of the lock, in blocks, with the given number of members.
@@ -1999,7 +1976,7 @@ impl<T: Config<I>, I: 'static> OnUnbalanced<NegativeImbalanceOf<T, I>> for Palle
 		let numeric_amount = amount.peek();
 
 		// Must resolve into existing but better to be safe.
-		let _ = T::Currency::resolve_creating(&Self::account_id(), amount);
+		let _ = T::Currency::resolve_creating(&Self::treasury(), amount);
 
 		Self::deposit_event(Event::<T, I>::Deposit(numeric_amount));
 	}

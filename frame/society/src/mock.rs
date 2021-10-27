@@ -63,7 +63,6 @@ parameter_types! {
 
 ord_parameter_types! {
 	pub const FounderSetAccount: u128 = 1;
-	pub const SuspensionJudgementSetAccount: u128 = 2;
 }
 
 impl frame_system::Config for Test {
@@ -116,7 +115,6 @@ impl Config for Test {
 	type RotationPeriod = RotationPeriod;
 	type MaxLockDuration = MaxLockDuration;
 	type FounderSetOrigin = EnsureSignedBy<FounderSetAccount, u128>;
-	type SuspensionJudgementOrigin = EnsureSignedBy<SuspensionJudgementSetAccount, u128>;
 	type ChallengePeriod = ChallengePeriod;
 	type MaxCandidateIntake = MaxCandidateIntake;
 	type PalletId = SocietyPalletId;
@@ -156,7 +154,7 @@ impl EnvBuilder {
 
 	pub fn execute<R, F: FnOnce() -> R>(mut self, f: F) -> R {
 		let mut t = frame_system::GenesisConfig::default().build_storage::<Test>().unwrap();
-		self.balances.push((Society::account_id(), self.balance.max(self.pot)));
+		self.balances.push((Society::treasury(), self.balance.max(self.pot)));
 		pallet_balances::GenesisConfig::<Test> { balances: self.balances }
 			.assimilate_storage(&mut t)
 			.unwrap();
@@ -226,7 +224,12 @@ pub fn call_transfer(dest: u128, value: u64) -> Call {
 	Call::Balances(BalancesCall::transfer { dest, value })
 }
 
-/// Creates a change_founder Call to be used by bid_action().
-pub fn call_change_founder(new_founder: u128) -> Call {
-	Call::Society(SocietyCall::change_founder { new_founder })
+/// Creates a judge_suspended_member Call to be used by bid_action().
+pub fn call_judge_suspended_member(who: u128, forgive: bool) -> Call {
+	Call::Society(SocietyCall::judge_suspended_member { who, forgive })
+}
+
+/// Creates a judge_suspended_candidate Call to be used by bid_action().
+pub fn call_judge_suspended_candidate(who: u128, judgement: Judgement) -> Call {
+	Call::Society(SocietyCall::judge_suspended_candidate { who, judgement })
 }
