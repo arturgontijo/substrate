@@ -251,6 +251,11 @@ mod mock;
 #[cfg(test)]
 mod tests;
 
+#[cfg(feature = "runtime-benchmarks")]
+mod benchmarking;
+
+pub mod weights;
+
 use frame_support::{
 	pallet_prelude::*,
 	traits::{
@@ -273,6 +278,7 @@ use sp_runtime::{
 	Percent, RuntimeDebug,
 };
 use sp_std::prelude::*;
+pub use weights::WeightInfo;
 
 pub use pallet::*;
 
@@ -431,6 +437,9 @@ pub mod pallet {
 		/// The maximum number of candidates that we accept per round.
 		#[pallet::constant]
 		type MaxCandidateIntake: Get<u32>;
+
+		/// Weight information for extrinsics in this pallet.
+		type WeightInfo: WeightInfo;
 	}
 
 	#[pallet::error]
@@ -709,7 +718,7 @@ pub mod pallet {
 		///
 		/// Total Complexity: O(M + B + C + logM + logB + X)
 		/// # </weight>
-		#[pallet::weight(T::BlockWeights::get().max_block / 10)]
+		#[pallet::weight(T::WeightInfo::bid())]
 		pub fn bid(origin: OriginFor<T>, value: BalanceOf<T, I>) -> DispatchResult {
 			let who = ensure_signed(origin)?;
 			ensure!(!<SuspendedCandidates<T, I>>::contains_key(&who), Error::<T, I>::Suspended);
@@ -748,7 +757,7 @@ pub mod pallet {
 		///
 		/// Total Complexity: O(B + X)
 		/// # </weight>
-		#[pallet::weight(T::BlockWeights::get().max_block / 10)]
+		#[pallet::weight(T::WeightInfo::unbid())]
 		pub fn unbid(origin: OriginFor<T>, pos: u32) -> DispatchResult {
 			let who = ensure_signed(origin)?;
 
@@ -820,7 +829,7 @@ pub mod pallet {
 		///
 		/// Total Complexity: O(M + B + C + logM + logB + X)
 		/// # </weight>
-		#[pallet::weight(T::BlockWeights::get().max_block / 10)]
+		#[pallet::weight(T::WeightInfo::vouch())]
 		pub fn vouch(
 			origin: OriginFor<T>,
 			who: T::AccountId,
@@ -870,7 +879,7 @@ pub mod pallet {
 		///
 		/// Total Complexity: O(B)
 		/// # </weight>
-		#[pallet::weight(T::BlockWeights::get().max_block / 10)]
+		#[pallet::weight(T::WeightInfo::unvouch())]
 		pub fn unvouch(origin: OriginFor<T>, pos: u32) -> DispatchResult {
 			let voucher = ensure_signed(origin)?;
 			ensure!(
@@ -911,7 +920,7 @@ pub mod pallet {
 		///
 		/// Total Complexity: O(M + logM + C)
 		/// # </weight>
-		#[pallet::weight(T::BlockWeights::get().max_block / 10)]
+		#[pallet::weight(T::WeightInfo::vote())]
 		pub fn vote(
 			origin: OriginFor<T>,
 			candidate: <T::Lookup as StaticLookup>::Source,
@@ -947,7 +956,7 @@ pub mod pallet {
 		///
 		/// Total Complexity: O(M + logM)
 		/// # </weight>
-		#[pallet::weight(T::BlockWeights::get().max_block / 10)]
+		#[pallet::weight(T::WeightInfo::defender_vote())]
 		pub fn defender_vote(origin: OriginFor<T>, approve: bool) -> DispatchResult {
 			let voter = ensure_signed(origin)?;
 			let members = <Members<T, I>>::get();
@@ -981,7 +990,7 @@ pub mod pallet {
 		///
 		/// Total Complexity: O(M + logM + P + X)
 		/// # </weight>
-		#[pallet::weight(T::BlockWeights::get().max_block / 10)]
+		#[pallet::weight(T::WeightInfo::payout())]
 		pub fn payout(origin: OriginFor<T>) -> DispatchResult {
 			let who = ensure_signed(origin)?;
 
@@ -1023,7 +1032,7 @@ pub mod pallet {
 		///
 		/// Total Complexity: O(1)
 		/// # </weight>
-		#[pallet::weight(T::BlockWeights::get().max_block / 10)]
+		#[pallet::weight(T::WeightInfo::found())]
 		pub fn found(
 			origin: OriginFor<T>,
 			founder: T::AccountId,
@@ -1056,7 +1065,7 @@ pub mod pallet {
 		///
 		/// Total Complexity: O(1)
 		/// # </weight>
-		#[pallet::weight(T::BlockWeights::get().max_block / 10)]
+		#[pallet::weight(T::WeightInfo::unfound())]
 		pub fn unfound(origin: OriginFor<T>) -> DispatchResult {
 			let founder = ensure_signed(origin)?;
 			ensure!(Founder::<T, I>::get() == Some(founder.clone()), Error::<T, I>::NotFounder);
@@ -1100,7 +1109,7 @@ pub mod pallet {
 		///
 		/// Total Complexity: O(M + logM + B)
 		/// # </weight>
-		#[pallet::weight(T::BlockWeights::get().max_block / 10)]
+		#[pallet::weight(T::WeightInfo::judge_suspended_member())]
 		pub fn judge_suspended_member(
 			origin: OriginFor<T>,
 			who: T::AccountId,
@@ -1176,7 +1185,7 @@ pub mod pallet {
 		///
 		/// Total Complexity: O(M + logM + B + X)
 		/// # </weight>
-		#[pallet::weight(T::BlockWeights::get().max_block / 10)]
+		#[pallet::weight(T::WeightInfo::judge_suspended_candidate())]
 		pub fn judge_suspended_candidate(
 			origin: OriginFor<T>,
 			who: T::AccountId,
@@ -1248,7 +1257,7 @@ pub mod pallet {
 		///
 		/// Total Complexity: O(1)
 		/// # </weight>
-		#[pallet::weight(T::BlockWeights::get().max_block / 10)]
+		#[pallet::weight(T::WeightInfo::set_max_members())]
 		pub fn set_max_members(origin: OriginFor<T>, max: u32) -> DispatchResult {
 			ensure_root(origin)?;
 			ensure!(max > 1, Error::<T, I>::MaxMembers);
