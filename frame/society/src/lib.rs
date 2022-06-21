@@ -1076,6 +1076,7 @@ pub mod pallet {
 			Founder::<T, I>::kill();
 			Rules::<T, I>::kill();
 			Candidates::<T, I>::kill();
+			#[allow(deprecated)]
 			SuspendedCandidates::<T, I>::remove_all(None);
 			Self::deposit_event(Event::<T, I>::Unfounded { founder });
 			Ok(())
@@ -1280,9 +1281,9 @@ impl<T: Config> EnsureOrigin<T::Origin> for EnsureFounder<T> {
 	}
 
 	#[cfg(feature = "runtime-benchmarks")]
-	fn successful_origin() -> T::Origin {
-		let founder = Founder::<T>::get().expect("society founder should exist");
-		T::Origin::from(frame_system::RawOrigin::Signed(founder))
+	fn try_successful_origin() -> Result<T::Origin, ()> {
+		let founder = Founder::<T>::get().ok_or(())?;
+		Ok(T::Origin::from(frame_system::RawOrigin::Signed(founder)))
 	}
 }
 
@@ -1520,6 +1521,7 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
 				.collect::<Vec<_>>();
 
 			// Clean up all votes.
+			#[allow(deprecated)]
 			<Votes<T, I>>::remove_all(None);
 
 			// Reward one of the voters who voted the right way.
@@ -1704,6 +1706,7 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
 				}
 
 				// Clean up all votes.
+				#[allow(deprecated)]
 				<DefenderVotes<T, I>>::remove_all(None);
 			}
 
