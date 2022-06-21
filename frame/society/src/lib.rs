@@ -250,10 +250,16 @@ mod mock;
 #[cfg(test)]
 mod tests;
 
+#[cfg(feature = "runtime-benchmarks")]
+mod benchmarking;
+
+pub mod weights;
+
 pub mod migrations;
 
 use frame_support::{
 	pallet_prelude::*,
+	storage::KeyLenOf,
 	traits::{
 		Currency, EnsureOrigin, ExistenceRequirement::AllowDeath,
 		Imbalance, OnUnbalanced, Randomness, ReservableCurrency, BalanceStatus,
@@ -274,6 +280,8 @@ use sp_runtime::{
 	ArithmeticError::Overflow, Percent, RuntimeDebug,
 };
 use sp_std::prelude::*;
+
+pub use weights::WeightInfo;
 
 pub use pallet::*;
 
@@ -527,6 +535,9 @@ pub mod pallet {
 		/// The maximum number of bids at once.
 		#[pallet::constant]
 		type MaxBids: Get<u32>;
+
+		/// Weight information for extrinsics in this pallet.
+		type WeightInfo: WeightInfo;
 	}
 
 	#[pallet::error]
@@ -723,10 +734,10 @@ pub mod pallet {
 
 	/// Clear-cursor for Vote, map from Candidate -> (Maybe) Cursor.
 	#[pallet::storage]
-	pub type VoteClearCursor<T: Config<I>, I: 'static = ()> = StorageMap<_,
+	pub(super) type VoteClearCursor<T: Config<I>, I: 'static = ()> = StorageMap<_,
 		Twox64Concat,
 		T::AccountId,
-		BoundedVec<u8, KeyLenOf::<Votes>>,
+		BoundedVec<u8, KeyLenOf<Votes<T, I>>>
 	>;
 
 	/// At the end of the claim period, this contains the most recently approved members (along with
@@ -821,7 +832,7 @@ pub mod pallet {
 		///
 		/// Key: B (len of bids), C (len of candidates), M (len of members), X (balance reserve)
 		/// Total Complexity: O(M + B + C + logM + logB + X)
-		#[pallet::weight(T::BlockWeights::get().max_block / 10)]
+		#[pallet::weight(T::WeightInfo::bid())]
 		pub fn bid(origin: OriginFor<T>, value: BalanceOf<T, I>) -> DispatchResult {
 			let who = ensure_signed(origin)?;
 
@@ -852,7 +863,7 @@ pub mod pallet {
 		///
 		/// Key: B (len of bids), X (balance unreserve)
 		/// Total Complexity: O(B + X)
-		#[pallet::weight(T::BlockWeights::get().max_block / 10)]
+		#[pallet::weight(T::WeightInfo::unbid())]
 		pub fn unbid(origin: OriginFor<T>) -> DispatchResult {
 			let who = ensure_signed(origin)?;
 
@@ -1080,7 +1091,7 @@ pub mod pallet {
 		/// - `rules` - The rules of this society concerning membership.
 		///
 		/// Complexity: O(1)
-		#[pallet::weight(T::BlockWeights::get().max_block / 10)]
+		#[pallet::weight(T::WeightInfo::found_society())]
 		pub fn found_society(
 			origin: OriginFor<T>,
 			founder: T::AccountId,
@@ -1111,7 +1122,7 @@ pub mod pallet {
 		/// member.
 		///
 		/// Total Complexity: O(1)
-		#[pallet::weight(T::BlockWeights::get().max_block / 10)]
+		#[pallet::weight(T::WeightInfo::dissolve())]
 		pub fn dissolve(origin: OriginFor<T>) -> DispatchResult {
 			let founder = ensure_signed(origin)?;
 			ensure!(Founder::<T, I>::get().as_ref() == Some(&founder), Error::<T, I>::NotFounder);
@@ -1304,8 +1315,8 @@ pub mod pallet {
 			ensure_signed(origin)?;
 			ensure!(!Candidates::<T, I>::contains_key(&candidate), Error::<T, I>::InProgress);
 			let maybe_cursor = VoteClearCursor::<T, I>::get(&candidate);
-			let r = Votes::<T, I>::clear_prefix(&candidate, Some(max), maybe_cursor.as_ref().map(|x| &x[..]));
-			VoteClearCursor::<T, I>::set(&candidate, r.maybe_cursor.map(BoundedVec::truncate_from));
+			let r = Votes::<T, I>::clear_prefix(&candidate, max, maybe_cursor.as_ref().map(|x| &x[..]));
+			VoteClearCursor::<T, I>::insert(&candidate, r.maybe_cursor.map(BoundedVec::truncate_from).unwrap());
 			Ok(if r.loops == 0 { Pays::Yes } else { Pays::No }.into())
 		}
 
@@ -1320,10 +1331,10 @@ pub mod pallet {
 		) -> DispatchResultWithPostInfo {
 			ensure_signed(origin)?;
 			ensure!(challenge_round < ChallengeRoundCount::<T, I>::get(), Error::<T, I>::InProgress);
-			match DefenderVotes::<T, I>::remove_prefix(challenge_round, Some(max)) {
-				KillStorageResult::AllRemoved(0) => Err(Error::<T, I>::NoVotes.into()),
-				_ => Ok(Pays::No.into()),
-			}
+			let r = DefenderVotes::<T, I>::clear_prefix(challenge_round, max, None);
+			let (_, backend, _, _) = r.deconstruct();
+			if backend == 0 { return Err(Error::<T, I>::NoVotes.into()); };
+			Ok(Pays::No.into())
 		}
 	}
 }
