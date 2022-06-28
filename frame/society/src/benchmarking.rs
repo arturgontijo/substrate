@@ -32,9 +32,9 @@ use crate::Pallet as Society;
 fn setup_society<T: Config<I>, I: 'static>(founder: T::AccountId) -> Result<(), &'static str> {
 	let candidate_deposit = T::Currency::minimum_balance();
 	let origin = T::FounderSetOrigin::successful_origin();
-	let max_members = 5u32.into();
-	let max_intake = 3u32.into();
-	let max_strikes = 3u32.into();
+	let max_members = 5u32;
+	let max_intake = 3u32;
+	let max_strikes = 3u32;
 	Society::<T, I>::found_society(
 		origin,
 		founder,
@@ -51,12 +51,12 @@ benchmarks_instance_pallet! {
 
 	bid {
 		let founder: T::AccountId = account("founder", 0, 0);
-		setup_society::<T, I>(founder.clone())?;
+		setup_society::<T, I>(founder)?;
 
 		let caller: T::AccountId = whitelisted_caller();
 		let deposit: BalanceOf<T, I> = T::Currency::minimum_balance();
 		T::Currency::make_free_balance_be(&caller, BalanceOf::<T, I>::max_value());
-	}: bid(RawOrigin::Signed(caller.clone()), 10u32.into())
+	}: _(RawOrigin::Signed(caller.clone()), 10u32.into())
 	verify {
 		let first_bid: Bid<T::AccountId, BalanceOf<T, I>> = Bid {
 			who: caller.clone(),
@@ -68,7 +68,7 @@ benchmarks_instance_pallet! {
 
 	unbid {
 		let founder: T::AccountId = account("founder", 0, 0);
-		setup_society::<T, I>(founder.clone())?;
+		setup_society::<T, I>(founder)?;
 
 		let caller: T::AccountId = whitelisted_caller();
 		let deposit: BalanceOf<T, I> = T::Currency::minimum_balance();
@@ -77,26 +77,180 @@ benchmarks_instance_pallet! {
 		let mut bids = Bids::<T, I>::get();
 		Society::<T, I>::insert_bid(&mut bids, &caller, 10u32.into(), BidKind::Deposit(deposit));
 		Bids::<T, I>::put(bids);
-	}: unbid(RawOrigin::Signed(caller.clone()))
+	}: _(RawOrigin::Signed(caller.clone()))
 	verify {
 		assert_eq!(Bids::<T, I>::get(), vec![]);
+	}
+
+	vouch {
+		let founder: T::AccountId = account("founder", 0, 0);
+		setup_society::<T, I>(founder)?;
+
+		let caller: T::AccountId = whitelisted_caller();
+		let vouched: T::AccountId = account("vouched", 0, 0);
+		T::Currency::make_free_balance_be(&caller, BalanceOf::<T, I>::max_value());
+
+		let _ = Society::<T, I>::insert_member(&caller, 1u32.into());
+
+	}: _(RawOrigin::Signed(caller.clone()), vouched.clone(), 0u32.into(), 0u32.into())
+	verify {
+		let bids = Bids::<T, I>::get();
+		let vouched_bid: Bid<T::AccountId, BalanceOf<T, I>> = Bid {
+			who: vouched.clone(),
+			kind: BidKind::Vouch(caller.clone(), 0u32.into()),
+			value: 0u32.into(),
+		};
+		assert_eq!(bids, vec![vouched_bid]);
+	}
+
+	unvouch {
+		let founder: T::AccountId = account("founder", 0, 0);
+		setup_society::<T, I>(founder)?;
+
+		let caller: T::AccountId = whitelisted_caller();
+		let vouched: T::AccountId = account("vouched", 0, 0);
+		T::Currency::make_free_balance_be(&caller, BalanceOf::<T, I>::max_value());
+
+		let mut bids = Bids::<T, I>::get();
+		Society::<T, I>::insert_bid(&mut bids, &caller, 10u32.into(), BidKind::Vouch(caller.clone(), 0u32.into()));
+		Bids::<T, I>::put(bids);
+
+	}: _(RawOrigin::Signed(caller.clone()))
+	verify {
+		assert_eq!(Bids::<T, I>::get(), vec![]);
+	}
+
+	vote {
+		let founder: T::AccountId = account("founder", 0, 0);
+		setup_society::<T, I>(founder)?;
+
+		let caller: T::AccountId = whitelisted_caller();
+		let candidate: T::AccountId = account("candidate", 0, 0);
+		let deposit: BalanceOf<T, I> = T::Currency::minimum_balance();
+		T::Currency::make_free_balance_be(&caller, BalanceOf::<T, I>::max_value());
+
+		let _ = Society::<T, I>::insert_member(&caller, 1u32.into());
+
+		let candidate_bid: Bid<T::AccountId, BalanceOf<T, I>> = Bid {
+			who: candidate.clone(),
+			kind: BidKind::Deposit(deposit),
+			value: 0u32.into(),
+		};
+		let candidacy = Candidacy {
+			round: ChallengeRoundCount::<T, I>::get(),
+			kind: candidate_bid.kind.clone(),
+			bid: candidate_bid.value,
+			tally: Default::default(),
+			skeptic_struck: false,
+		};
+		Candidates::<T, I>::insert(&candidate, &candidacy);
+		let candidate_lookup: <T::Lookup as StaticLookup>::Source = T::Lookup::unlookup(candidate.clone());
+
+	}: _(RawOrigin::Signed(caller.clone()), candidate_lookup, true)
+	verify {
+		let maybe_vote: Vote = <Votes<T, I>>::get(candidate.clone(), caller).unwrap();
+		assert_eq!(maybe_vote.approve, true);
+	}
+
+	defender_vote {
+		let founder: T::AccountId = account("founder", 0, 0);
+		setup_society::<T, I>(founder)?;
+
+		let caller: T::AccountId = whitelisted_caller();
+		T::Currency::make_free_balance_be(&caller, BalanceOf::<T, I>::max_value());
+		let _ = Society::<T, I>::insert_member(&caller, 1u32.into());
+
+		let defender: T::AccountId = account("defender", 0, 0);
+		Defending::<T, I>::put((defender, caller.clone(), Tally::default()));
+
+	}: _(RawOrigin::Signed(caller.clone()), false)
+	verify {
+		let round = ChallengeRoundCount::<T, I>::get();
+		let skeptic_vote: Vote = DefenderVotes::<T, I>::get(round, &caller).unwrap();
+		assert_eq!(skeptic_vote.approve, false);
+	}
+
+	payout {
+		let founder: T::AccountId = account("founder", 0, 0);
+		setup_society::<T, I>(founder)?;
+
+		let caller: T::AccountId = whitelisted_caller();
+		T::Currency::make_free_balance_be(&caller, T::Currency::minimum_balance() * 10u32.into());
+		let _ = Society::<T, I>::insert_member(&caller, 0u32.into());
+
+		T::Currency::make_free_balance_be(&Society::<T, I>::payouts(), BalanceOf::<T, I>::max_value());
+
+		let mut pot = <Pot<T, I>>::get();
+		pot = pot.saturating_add(BalanceOf::<T, I>::max_value());
+		Pot::<T, I>::put(&pot);
+
+		Society::<T, I>::bump_payout(&caller, 0u32.into(), 1u32.into());
+
+	}: _(RawOrigin::Signed(caller.clone()))
+	verify {
+		let record = Payouts::<T, I>::get(caller);
+		assert!(record.payouts.is_empty());
+	}
+
+	waive_repay {
+		let founder: T::AccountId = account("founder", 0, 0);
+		setup_society::<T, I>(founder)?;
+
+		let caller: T::AccountId = whitelisted_caller();
+		T::Currency::make_free_balance_be(&caller, BalanceOf::<T, I>::max_value());
+		let _ = Society::<T, I>::insert_member(&caller, 0u32.into());
+
+        T::Currency::make_free_balance_be(&Society::<T, I>::payouts(), BalanceOf::<T, I>::max_value());
+
+		Society::<T, I>::bump_payout(&caller, 0u32.into(), 1u32.into());
+
+	}: _(RawOrigin::Signed(caller.clone()), 1u32.into())
+	verify {
+		let record = Payouts::<T, I>::get(caller);
+		assert!(record.payouts.is_empty());
 	}
 
 	found_society {
 		let founder: T::AccountId = whitelisted_caller();
 		let can_found = T::FounderSetOrigin::successful_origin();
 		let candidate_deposit: BalanceOf<T, I> = T::Currency::minimum_balance();
-	}: found_society<T::Origin>(can_found, founder.clone(), 5, 3, 3, candidate_deposit, b"benchmarking-society".to_vec())
+	}: _<T::Origin>(can_found, founder.clone(), 5, 3, 3, candidate_deposit, b"benchmarking-society".to_vec())
 	verify {
-		assert_eq!(<Founder<T, I>>::get(), Some(founder.clone()));
+		assert_eq!(Founder::<T, I>::get(), Some(founder.clone()));
 	}
 
 	dissolve {
 		let founder: T::AccountId = whitelisted_caller();
 		setup_society::<T, I>(founder.clone())?;
-	}: dissolve(RawOrigin::Signed(founder))
+	}: _(RawOrigin::Signed(founder))
 	verify {
-		assert_eq!(<Founder<T, I>>::get(), None);
+		assert_eq!(Founder::<T, I>::get(), None);
+	}
+
+	judge_suspended_member {
+		let founder: T::AccountId = account("founder", 0, 0);
+		setup_society::<T, I>(founder.clone())?;
+
+		let caller: T::AccountId = whitelisted_caller();
+		let _ = Society::<T, I>::insert_member(&caller, 0u32.into());
+		let _ = Society::<T, I>::suspend_member(&caller);
+	}: _(RawOrigin::Signed(founder), caller.clone(), false)
+	verify {
+		assert_eq!(SuspendedMembers::<T, I>::contains_key(&caller), false);
+	}
+
+	set_parameters {
+		let founder: T::AccountId = whitelisted_caller();
+		setup_society::<T, I>(founder.clone())?;
+
+		let max_members = 10u32;
+		let max_intake = 10u32;
+		let max_strikes = 10u32;
+		let candidate_deposit: BalanceOf<T, I> = 10u32.into();
+		let params = GroupParams { max_members, max_intake, max_strikes, candidate_deposit };
+	}: _(RawOrigin::Signed(founder), max_members, max_intake, max_strikes, candidate_deposit)
+	verify {
+		assert_eq!(Parameters::<T, I>::get(), Some(params));
 	}
 
 	impl_benchmark_test_suite!(

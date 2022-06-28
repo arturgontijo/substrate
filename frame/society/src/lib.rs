@@ -895,7 +895,7 @@ pub mod pallet {
 		///
 		/// Key: B (len of bids), C (len of candidates), M (len of members)
 		/// Total Complexity: O(M + B + C + logM + logB + X)
-		#[pallet::weight(T::BlockWeights::get().max_block / 10)]
+		#[pallet::weight(T::WeightInfo::vouch())]
 		pub fn vouch(
 			origin: OriginFor<T>,
 			who: T::AccountId,
@@ -943,7 +943,7 @@ pub mod pallet {
 		///
 		/// Key: B (len of bids)
 		/// Total Complexity: O(B)
-		#[pallet::weight(T::BlockWeights::get().max_block / 10)]
+		#[pallet::weight(T::WeightInfo::unvouch())]
 		pub fn unvouch(origin: OriginFor<T>) -> DispatchResult {
 			let voucher = ensure_signed(origin)?;
 
@@ -969,7 +969,7 @@ pub mod pallet {
 		///
 		/// Key: C (len of candidates), M (len of members)
 		/// Total Complexity: O(M + logM + C)
-		#[pallet::weight(T::BlockWeights::get().max_block / 10)]
+		#[pallet::weight(T::WeightInfo::vote())]
 		pub fn vote(
 			origin: OriginFor<T>,
 			candidate: <T::Lookup as StaticLookup>::Source,
@@ -1003,7 +1003,7 @@ pub mod pallet {
 		/// Key: M (len of members)
 		/// Total Complexity: O(M + logM)
 		/// # </weight>
-		#[pallet::weight(T::BlockWeights::get().max_block / 10)]
+		#[pallet::weight(T::WeightInfo::defender_vote())]
 		pub fn defender_vote(origin: OriginFor<T>, approve: bool) -> DispatchResultWithPostInfo {
 			let voter = ensure_signed(origin)?;
 
@@ -1035,7 +1035,7 @@ pub mod pallet {
 		///
 		/// Key: M (len of members), P (number of payouts for a particular member)
 		/// Total Complexity: O(M + logM + P + X)
-		#[pallet::weight(T::BlockWeights::get().max_block / 10)]
+		#[pallet::weight(T::WeightInfo::payout())]
 		pub fn payout(origin: OriginFor<T>) -> DispatchResult {
 			let who = ensure_signed(origin)?;
 			ensure!(Members::<T, I>::get(&who).ok_or(Error::<T, I>::NotMember)?.rank == 0, Error::<T, I>::NoPayout);
@@ -1055,7 +1055,7 @@ pub mod pallet {
 
 		/// Repay the payment previously given to the member with the signed origin, remove any
 		/// pending payments, and elevate them from rank 0 to rank 1.
-		#[pallet::weight(T::BlockWeights::get().max_block / 10)]
+		#[pallet::weight(T::WeightInfo::waive_repay())]
 		pub fn waive_repay(origin: OriginFor<T>, amount: BalanceOf<T, I>) -> DispatchResult {
 			let who = ensure_signed(origin)?;
 			let mut record = Members::<T, I>::get(&who).ok_or(Error::<T, I>::NotMember)?;
@@ -1163,7 +1163,7 @@ pub mod pallet {
 		///
 		/// Key: B (len of bids), M (len of members)
 		/// Total Complexity: O(M + logM + B)
-		#[pallet::weight(T::BlockWeights::get().max_block / 10)]
+		#[pallet::weight(T::WeightInfo::judge_suspended_member())]
 		pub fn judge_suspended_member(
 			origin: OriginFor<T>,
 			who: T::AccountId,
