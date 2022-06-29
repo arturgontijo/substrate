@@ -1203,7 +1203,7 @@ pub mod pallet {
 		/// - `candidate_deposit`: The deposit required to make a bid for membership of the group.
 		///
 		/// Total Complexity: O(1)
-		#[pallet::weight(T::BlockWeights::get().max_block / 10)]
+		#[pallet::weight(T::WeightInfo::set_parameters())]
 		pub fn set_parameters(
 			origin: OriginFor<T>,
 			max_members: u32,
@@ -1221,7 +1221,7 @@ pub mod pallet {
 
 		/// Punish the skeptic with a strike if they did not vote on a candidate. Callable by the
 		/// candidate.
-		#[pallet::weight(T::BlockWeights::get().max_block / 10)]
+		#[pallet::weight(T::WeightInfo::punish_skeptic())]
 		pub fn punish_skeptic(origin: OriginFor<T>) -> DispatchResultWithPostInfo {
 			let candidate = ensure_signed(origin)?;
 			let mut candidacy = Candidates::<T, I>::get(&candidate).ok_or(Error::<T, I>::NotCandidate)?;
@@ -1234,7 +1234,7 @@ pub mod pallet {
 
 		/// Transform an approved candidate into a member. Callable only by the
 		/// the candidate, and only after the period for voting has ended.
-		#[pallet::weight(T::BlockWeights::get().max_block / 10)]
+		#[pallet::weight(T::WeightInfo::claim_membership())]
 		pub fn claim_membership(origin: OriginFor<T>) -> DispatchResultWithPostInfo {
 			let candidate = ensure_signed(origin)?;
 			let candidacy = Candidates::<T, I>::get(&candidate).ok_or(Error::<T, I>::NotCandidate)?;
@@ -1247,7 +1247,7 @@ pub mod pallet {
 		/// Transform an approved candidate into a member. Callable only by the Signed origin of the
 		/// Founder, only after the period for voting has ended and only when the candidate is not
 		/// clearly rejected.
-		#[pallet::weight(T::BlockWeights::get().max_block / 10)]
+		#[pallet::weight(T::WeightInfo::bestow_membership())]
 		pub fn bestow_membership(origin: OriginFor<T>, candidate: T::AccountId) -> DispatchResultWithPostInfo {
 			let founder = ensure_signed(origin)?;
 			ensure!(Founder::<T, I>::get() == Some(founder.clone()), Error::<T, I>::NotFounder);
@@ -1263,7 +1263,7 @@ pub mod pallet {
 		/// have a clear approval.
 		///
 		/// Any bid deposit is lost and voucher is banned.
-		#[pallet::weight(T::BlockWeights::get().max_block / 10)]
+		#[pallet::weight(T::WeightInfo::kick_candidate())]
 		pub fn kick_candidate(origin: OriginFor<T>, candidate: T::AccountId) -> DispatchResultWithPostInfo {
 			let founder = ensure_signed(origin)?;
 			ensure!(Founder::<T, I>::get() == Some(founder.clone()), Error::<T, I>::NotFounder);
@@ -1279,7 +1279,7 @@ pub mod pallet {
 		/// Remove the candidate's application from the society. Callable only by the candidate.
 		///
 		/// Any bid deposit is lost and voucher is banned.
-		#[pallet::weight(T::BlockWeights::get().max_block / 10)]
+		#[pallet::weight(T::WeightInfo::resign_candidacy())]
 		pub fn resign_candidacy(origin: OriginFor<T>) -> DispatchResultWithPostInfo {
 			let candidate = ensure_signed(origin)?;
 			let mut candidacy = Candidates::<T, I>::get(&candidate).ok_or(Error::<T, I>::NotCandidate)?;
@@ -1296,7 +1296,7 @@ pub mod pallet {
 		/// a candidate with more rejections than approvals.
 		///
 		/// The bid deposit is lost and the voucher is banned.
-		#[pallet::weight(T::BlockWeights::get().max_block / 10)]
+		#[pallet::weight(T::WeightInfo::drop_candidate())]
 		pub fn drop_candidate(origin: OriginFor<T>, candidate: T::AccountId) -> DispatchResultWithPostInfo {
 			ensure_signed(origin)?;
 			let candidacy = Candidates::<T, I>::get(&candidate).ok_or(Error::<T, I>::NotCandidate)?;
@@ -1310,20 +1310,22 @@ pub mod pallet {
 		/// Remove up to `max` stale votes for the given `candidate`.
 		///
 		/// May be called by any Signed origin, but only after the candidate's candidacy is ended.
-		#[pallet::weight(T::BlockWeights::get().max_block / 10)]
+		#[pallet::weight(T::WeightInfo::cleanup_candidacy())]
 		pub fn cleanup_candidacy(origin: OriginFor<T>, candidate: T::AccountId, max: u32) -> DispatchResultWithPostInfo {
 			ensure_signed(origin)?;
 			ensure!(!Candidates::<T, I>::contains_key(&candidate), Error::<T, I>::InProgress);
 			let maybe_cursor = VoteClearCursor::<T, I>::get(&candidate);
 			let r = Votes::<T, I>::clear_prefix(&candidate, max, maybe_cursor.as_ref().map(|x| &x[..]));
-			VoteClearCursor::<T, I>::insert(&candidate, r.maybe_cursor.map(BoundedVec::truncate_from).unwrap());
+			if let Some(cursor) = r.maybe_cursor {
+				VoteClearCursor::<T, I>::insert(&candidate, BoundedVec::truncate_from(cursor));
+			}
 			Ok(if r.loops == 0 { Pays::Yes } else { Pays::No }.into())
 		}
 
 		/// Remove up to `max` stale votes for the defender in the given `challenge_round`.
 		///
 		/// May be called by any Signed origin, but only after the challenge round is ended.
-		#[pallet::weight(T::BlockWeights::get().max_block / 10)]
+		#[pallet::weight(T::WeightInfo::cleanup_challenge())]
 		pub fn cleanup_challenge(
 			origin: OriginFor<T>,
 			challenge_round: RoundIndex,
@@ -1381,7 +1383,7 @@ impl<T: Config<I>, I: 'static> Pallet<T, I> {
 		let voting_period = T::VotingPeriod::get();
 		let rotation_period = voting_period + claim_period;
 		let now = frame_system::Pallet::<T>::block_number();
-		let phase = now % rotation_period;
+		let phase = now % rotation_period.clone();
 		if phase < voting_period {
 			Period::Voting { elapsed: phase, more: voting_period - phase }
 		} else {

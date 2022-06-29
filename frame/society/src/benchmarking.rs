@@ -47,6 +47,12 @@ fn setup_society<T: Config<I>, I: 'static>(founder: T::AccountId) -> Result<(), 
 	Ok(())
 }
 
+fn increment_round<T: Config<I>, I: 'static>() {
+	let mut round_count = RoundCount::<T, I>::get();
+	round_count.saturating_inc();
+	RoundCount::<T, I>::put(round_count);
+}
+
 benchmarks_instance_pallet! {
 
 	bid {
@@ -131,15 +137,10 @@ benchmarks_instance_pallet! {
 
 		let _ = Society::<T, I>::insert_member(&caller, 1u32.into());
 
-		let candidate_bid: Bid<T::AccountId, BalanceOf<T, I>> = Bid {
-			who: candidate.clone(),
-			kind: BidKind::Deposit(deposit),
-			value: 0u32.into(),
-		};
 		let candidacy = Candidacy {
-			round: ChallengeRoundCount::<T, I>::get(),
-			kind: candidate_bid.kind.clone(),
-			bid: candidate_bid.value,
+			round: RoundCount::<T, I>::get(),
+			kind: BidKind::Deposit(deposit),
+			bid: 0u32.into(),
 			tally: Default::default(),
 			skeptic_struck: false,
 		};
@@ -165,7 +166,7 @@ benchmarks_instance_pallet! {
 
 	}: _(RawOrigin::Signed(caller.clone()), false)
 	verify {
-		let round = ChallengeRoundCount::<T, I>::get();
+		let round = RoundCount::<T, I>::get();
 		let skeptic_vote: Vote = DefenderVotes::<T, I>::get(round, &caller).unwrap();
 		assert_eq!(skeptic_vote.approve, false);
 	}
@@ -251,6 +252,209 @@ benchmarks_instance_pallet! {
 	}: _(RawOrigin::Signed(founder), max_members, max_intake, max_strikes, candidate_deposit)
 	verify {
 		assert_eq!(Parameters::<T, I>::get(), Some(params));
+	}
+
+	punish_skeptic {
+		let founder: T::AccountId = account("founder", 0, 0);
+		setup_society::<T, I>(founder)?;
+
+		let candidate: T::AccountId = account("candidate", 0, 0);
+		let deposit: BalanceOf<T, I> = T::Currency::minimum_balance();
+		T::Currency::make_free_balance_be(&candidate, BalanceOf::<T, I>::max_value());
+
+		let candidacy = Candidacy {
+			round: RoundCount::<T, I>::get(),
+			kind: BidKind::Deposit(deposit),
+			bid: 0u32.into(),
+			tally: Default::default(),
+			skeptic_struck: false,
+		};
+		Candidates::<T, I>::insert(&candidate, &candidacy);
+
+		let skeptic: T::AccountId = account("skeptic", 0, 0);
+		let _ = Society::<T, I>::insert_member(&skeptic, 0u32.into());
+		Skeptic::<T, I>::put(&skeptic);
+		frame_system::Pallet::<T>::set_block_number(T::VotingPeriod::get() + 1u32.into());
+
+	}: _(RawOrigin::Signed(candidate.clone()))
+	verify {
+		let candidacy = Candidates::<T, I>::get(&candidate).unwrap();
+		assert_eq!(candidacy.skeptic_struck, true);
+	}
+
+    claim_membership {
+		let founder: T::AccountId = account("founder", 0, 0);
+		setup_society::<T, I>(founder)?;
+
+		let candidate: T::AccountId = account("candidate", 0, 0);
+		let deposit: BalanceOf<T, I> = T::Currency::minimum_balance();
+		T::Currency::make_free_balance_be(&candidate, BalanceOf::<T, I>::max_value());
+
+		let candidacy = Candidacy {
+			round: RoundCount::<T, I>::get(),
+			kind: BidKind::Deposit(deposit),
+			bid: 0u32.into(),
+			tally: Tally { approvals: 3u32.into(), rejections: 0u32.into() },
+			skeptic_struck: false,
+		};
+		Candidates::<T, I>::insert(&candidate, &candidacy);
+		increment_round::<T, I>();
+
+	}: _(RawOrigin::Signed(candidate.clone()))
+	verify {
+		assert!(!Candidates::<T, I>::contains_key(&candidate));
+		assert!(Members::<T, I>::contains_key(&candidate));
+	}
+
+	bestow_membership {
+		let founder: T::AccountId = account("founder", 0, 0);
+		setup_society::<T, I>(founder.clone())?;
+
+		let candidate: T::AccountId = account("candidate", 0, 0);
+		let deposit: BalanceOf<T, I> = T::Currency::minimum_balance();
+		T::Currency::make_free_balance_be(&candidate, BalanceOf::<T, I>::max_value());
+
+		let candidacy = Candidacy {
+			round: RoundCount::<T, I>::get(),
+			kind: BidKind::Deposit(deposit),
+			bid: 0u32.into(),
+			tally: Tally { approvals: 3u32.into(), rejections: 1u32.into() },
+			skeptic_struck: false,
+		};
+		Candidates::<T, I>::insert(&candidate, &candidacy);
+		increment_round::<T, I>();
+
+	}: _(RawOrigin::Signed(founder), candidate.clone())
+	verify {
+		assert!(!Candidates::<T, I>::contains_key(&candidate));
+		assert!(Members::<T, I>::contains_key(&candidate));
+	}
+
+	kick_candidate {
+		let founder: T::AccountId = account("founder", 0, 0);
+		setup_society::<T, I>(founder.clone())?;
+
+		let candidate: T::AccountId = account("candidate", 0, 0);
+		let deposit: BalanceOf<T, I> = T::Currency::minimum_balance();
+		T::Currency::make_free_balance_be(&candidate, BalanceOf::<T, I>::max_value());
+
+		let candidacy = Candidacy {
+			round: RoundCount::<T, I>::get(),
+			kind: BidKind::Deposit(deposit),
+			bid: 0u32.into(),
+			tally: Tally { approvals: 1u32.into(), rejections: 3u32.into() },
+			skeptic_struck: false,
+		};
+		Candidates::<T, I>::insert(&candidate, &candidacy);
+		increment_round::<T, I>();
+
+	}: _(RawOrigin::Signed(founder), candidate.clone())
+	verify {
+		assert!(!Candidates::<T, I>::contains_key(&candidate));
+	}
+
+	resign_candidacy {
+		let founder: T::AccountId = account("founder", 0, 0);
+		setup_society::<T, I>(founder)?;
+
+		let candidate: T::AccountId = account("candidate", 0, 0);
+		let deposit: BalanceOf<T, I> = T::Currency::minimum_balance();
+		T::Currency::make_free_balance_be(&candidate, BalanceOf::<T, I>::max_value());
+
+		let candidacy = Candidacy {
+			round: RoundCount::<T, I>::get(),
+			kind: BidKind::Deposit(deposit),
+			bid: 0u32.into(),
+			tally: Tally { approvals: 0u32.into(), rejections: 0u32.into() },
+			skeptic_struck: false,
+		};
+		Candidates::<T, I>::insert(&candidate, &candidacy);
+
+	}: _(RawOrigin::Signed(candidate.clone()))
+	verify {
+		assert!(!Candidates::<T, I>::contains_key(&candidate));
+	}
+
+	drop_candidate {
+		let founder: T::AccountId = account("founder", 0, 0);
+		setup_society::<T, I>(founder)?;
+
+		let candidate: T::AccountId = account("candidate", 0, 0);
+		let deposit: BalanceOf<T, I> = T::Currency::minimum_balance();
+		T::Currency::make_free_balance_be(&candidate, BalanceOf::<T, I>::max_value());
+
+		let candidacy = Candidacy {
+			round: RoundCount::<T, I>::get(),
+			kind: BidKind::Deposit(deposit),
+			bid: 0u32.into(),
+			tally: Tally { approvals: 0u32.into(), rejections: 3u32.into() },
+			skeptic_struck: false,
+		};
+		Candidates::<T, I>::insert(&candidate, &candidacy);
+
+		let caller: T::AccountId = whitelisted_caller();
+		let _ = Society::<T, I>::insert_member(&caller, 0u32.into());
+
+		let mut round_count = RoundCount::<T, I>::get();
+		round_count = round_count.saturating_add(candidacy.round + 2);
+		RoundCount::<T, I>::put(round_count);
+
+	}: _(RawOrigin::Signed(caller), candidate.clone())
+	verify {
+		assert!(!Candidates::<T, I>::contains_key(&candidate));
+	}
+
+	cleanup_candidacy {
+		let founder: T::AccountId = account("founder", 0, 0);
+		setup_society::<T, I>(founder)?;
+
+		let candidate: T::AccountId = account("candidate", 0, 0);
+		let deposit: BalanceOf<T, I> = T::Currency::minimum_balance();
+		T::Currency::make_free_balance_be(&candidate, BalanceOf::<T, I>::max_value());
+
+		let candidacy = Candidacy {
+			round: RoundCount::<T, I>::get(),
+			kind: BidKind::Deposit(deposit),
+			bid: 0u32.into(),
+			tally: Tally { approvals: 0u32.into(), rejections: 0u32.into() },
+			skeptic_struck: false,
+		};
+		Candidates::<T, I>::insert(&candidate, &candidacy);
+
+		let member_one: T::AccountId = account("one", 0, 0);
+		let member_two: T::AccountId = account("two", 0, 0);
+		let _ = Society::<T, I>::insert_member(&member_one, 0u32.into());
+		let _ = Society::<T, I>::insert_member(&member_two, 0u32.into());
+
+		let candidate_lookup: <T::Lookup as StaticLookup>::Source = T::Lookup::unlookup(candidate.clone());
+		let _ = Society::<T, I>::vote(RawOrigin::Signed(member_one.clone()).into(), candidate_lookup.clone(), true);
+        let _ = Society::<T, I>::vote(RawOrigin::Signed(member_two.clone()).into(), candidate_lookup, true);
+		Candidates::<T, I>::remove(&candidate);
+
+	}: _(RawOrigin::Signed(member_one), candidate.clone(), 5)
+	verify {
+		assert_eq!(Votes::<T, I>::get(&candidate, &member_two), None);
+	}
+
+	cleanup_challenge {
+		let founder: T::AccountId = account("founder", 0, 0);
+		setup_society::<T, I>(founder)?;
+
+		ChallengeRoundCount::<T, I>::put(1u32);
+
+		let member: T::AccountId = whitelisted_caller();
+		let _ = Society::<T, I>::insert_member(&member, 0u32.into());
+        let defender: T::AccountId = account("defender", 0, 0);
+		Defending::<T, I>::put((defender.clone(), member.clone(), Tally::default()));
+		let _ = Society::<T, I>::defender_vote(RawOrigin::Signed(member.clone()).into(), true);
+
+		ChallengeRoundCount::<T, I>::put(2u32);
+		let mut challenge_round = ChallengeRoundCount::<T, I>::get();
+		challenge_round = challenge_round.saturating_sub(1u32);
+
+	}: _(RawOrigin::Signed(member.clone()), challenge_round, 1u32)
+	verify {
+		assert_eq!(DefenderVotes::<T, I>::get(challenge_round, &defender), None);
 	}
 
 	impl_benchmark_test_suite!(
