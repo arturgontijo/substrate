@@ -42,12 +42,16 @@ fn setup_society<T: Config<I>, I: 'static>(founder: T::AccountId) -> Result<(), 
 		max_intake,
 		max_strikes,
 		candidate_deposit,
-		b"benchmarking-society".to_vec()
+		b"benchmarking-society".to_vec(),
 	)?;
 	Ok(())
 }
 
-fn add_candidate<T: Config<I>, I: 'static>(name: &'static str, tally: Tally, skeptic_struck: bool) -> T::AccountId {
+fn add_candidate<T: Config<I>, I: 'static>(
+	name: &'static str,
+	tally: Tally,
+	skeptic_struck: bool,
+) -> T::AccountId {
 	let candidate: T::AccountId = account(name, 0, 0);
 	T::Currency::make_free_balance_be(&candidate, BalanceOf::<T, I>::max_value());
 	let deposit: BalanceOf<T, I> = T::Currency::minimum_balance();
@@ -202,7 +206,7 @@ benchmarks_instance_pallet! {
 		T::Currency::make_free_balance_be(&caller, BalanceOf::<T, I>::max_value());
 		let _ = Society::<T, I>::insert_member(&caller, 0u32.into());
 
-        T::Currency::make_free_balance_be(&Society::<T, I>::payouts(), BalanceOf::<T, I>::max_value());
+		T::Currency::make_free_balance_be(&Society::<T, I>::payouts(), BalanceOf::<T, I>::max_value());
 
 		Society::<T, I>::bump_payout(&caller, 0u32.into(), 1u32.into());
 	}: _(RawOrigin::Signed(caller.clone()), 1u32.into())
@@ -270,7 +274,7 @@ benchmarks_instance_pallet! {
 		assert_eq!(candidacy.skeptic_struck, true);
 	}
 
-    claim_membership {
+	claim_membership {
 		let founder: T::AccountId = account("founder", 0, 0);
 		setup_society::<T, I>(founder)?;
 
@@ -345,7 +349,7 @@ benchmarks_instance_pallet! {
 
 		let candidate_lookup: <T::Lookup as StaticLookup>::Source = T::Lookup::unlookup(candidate.clone());
 		let _ = Society::<T, I>::vote(RawOrigin::Signed(member_one.clone()).into(), candidate_lookup.clone(), true);
-        let _ = Society::<T, I>::vote(RawOrigin::Signed(member_two.clone()).into(), candidate_lookup, true);
+		let _ = Society::<T, I>::vote(RawOrigin::Signed(member_two.clone()).into(), candidate_lookup, true);
 		Candidates::<T, I>::remove(&candidate);
 	}: _(RawOrigin::Signed(member_one), candidate.clone(), 5)
 	verify {
@@ -360,7 +364,7 @@ benchmarks_instance_pallet! {
 
 		let member: T::AccountId = whitelisted_caller();
 		let _ = Society::<T, I>::insert_member(&member, 0u32.into());
-        let defender: T::AccountId = account("defender", 0, 0);
+		let defender: T::AccountId = account("defender", 0, 0);
 		Defending::<T, I>::put((defender.clone(), member.clone(), Tally::default()));
 		let _ = Society::<T, I>::defender_vote(RawOrigin::Signed(member.clone()).into(), true);
 
